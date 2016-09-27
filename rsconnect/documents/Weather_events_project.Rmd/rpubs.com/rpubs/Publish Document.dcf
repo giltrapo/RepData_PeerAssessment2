@@ -1,0 +1,7 @@
+name: Publish Document
+account: rpubs
+server: rpubs.com
+appId: https://api.rpubs.com/api/v1/document/210229/7ca34e5826d247468e8a1ed217cac073
+bundleId: https://api.rpubs.com/api/v1/document/210229/7ca34e5826d247468e8a1ed217cac073
+url: http://rpubs.com/giltrapo/210229
+when: 1474327719.65957

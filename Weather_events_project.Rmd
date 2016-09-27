@@ -1,0 +1,274 @@
+---
+title: "Harmful weather events in the United States between 1993 and 2011"
+author: "Jose Ignacio Gómez Marcelo"
+output: 
+  html_document:
+    keep_md: true
+---
+
+
+## Synopsis
+The aim of this study is to find out which are the most dangerous meteorological phenomena in the United States, by using the database maintained by the U.S. National Oceanic and Atmospheric Administration ( NOAA) since 1950.
+
+Two dimensions will be explored regarding the dangerousness of the events. On the one hand the human cost, in terms of people killed or injured by a meteorological event. On the other hand the economic impact of these events, based on the cost of the destruction of properties and crops, expressed in US dollars.
+
+As will be outlined in this paper, the most damaging weather events are different ones both in each of the aforementioned dimensions, and in each of different types of damage they can cause.
+
+## Data processing
+
+### Software
+This data analysis was carried out using R, a free software environment for statistical computing and graphics.
+```{r sessioninfo}
+sessionInfo()
+```
+Additionally, the packages `data.table`, `stringr`and `ggplot2` were used.
+
+```{r libraries}
+library(data.table)
+library(stringr)
+library(ggplot2)
+```
+
+### Reading and subsetting the dataset
+The storm events dataset was downloaded from [here](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2), and saved in the working directory.
+
+```{r downloadataset}
+if (!"repdata_data_StormData.csv.bz2" %in% list.files()) download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", destfile = "repdata_data_StormData.csv.bz2")
+```
+
+The size of the file is about 49 MB, compressed, and more than 560 MB uncompressed, so we used `fread` function, from `data.table` package, for a quicker loading. Note that the following code only works in Linux platforms. Otherwise, you must first extract the .csv file in your working directory, and then read it using the `fread` function.
+
+```{r readata, cache = TRUE}
+stormdata <- fread(sprintf("bzcat %s", "repdata_data_StormData.csv.bz2"), header = TRUE, sep = ",")
+### In no Linux platforms you can run stormdata <- fread(repdata_data_StormData.csv", header = TRUE, sep = ",")
+```
+
+There is a warning about the difference between the lines allocated (967216) and read (902297), but this is not a concern. The `fread` function uses number of separators and end of lines in the dataset to calculate and allocate the number of rows, and sometimes it fails with the counting. The original file has, in fact, 902297 files and 37 variables.
+
+Let's take a look at the dataset.
+
+```{r datasetstr}
+str(stormdata)
+```
+
+We have 902297 observations and 37 variables, but we only need those variables that provide us with information about the type of weather event and the damage they have caused, both economic and human.
+
+A codebook of the dataset is available in this url:
+
+[http://ire.org/media/uploads/files/datalibrary/samplefiles/Storm%20Events/layout08.doc](http://ire.org/media/uploads/files/datalibrary/samplefiles/Storm%20Events/layout08.doc)
+
+So, according the codebook, the following variables are relevant to the analysis:
+
+- `$BGN_DATE`: Date the storm event began. Character format.
+- `$EVTYPE`: Type of storm event. Character format.
+- `$FATALITIES`: Number directly killed. Numeric format.
+- `$INJURIES`: Number directly injured. Numeric format.
+- `$PROPDMG`: Property damage in whole numbers and hundredths. Numeric format
+- `$PROPDMGEXP`: A multiplier for `$PROPDMG`. Character format.
+- `$CROPDMG`: Crop damage in whole numbers and hundredths. Numeric format.
+- `$CROPDMGEXP`: A multiplier for `$CROPDMG`. Character format.
+
+On the other hand, we can see in the [Storm Event Database detail page](https://www.ncdc.noaa.gov/stormevents/details.jsp) that from 1950 to 1954, only tornado events were recorded. And from 1955 to 1996, only tornado, thunderstorm wind and hail events were extracted from the paper publications or unformmated text files.
+
+So, `$BGN_DATE` is also selected, in order to perform subsequents subsets.
+
+```{r selectingvars}
+stormdata <- stormdata[, c(2, 8, 23:28), with = FALSE]
+```
+
+First of all, we transformed the `$BGN_DATE` into date format.
+
+```{r dateformat}
+stormdata$BGN_DATE <- as.Date(stormdata$BGN_DATE, format = "%m/%d/%Y")
+```
+
+Now let's check the point about unique events along the years.
+
+```{r checkuniquevents}
+tapply(stormdata$EVTYPE, format(stormdata$BGN_DATE, "%Y"), function(x) length(unique(x)))
+```
+
+From 1950 to 1954 only one event have been recorded. Also, from 1955 to 1992 three events have been recorded. But from that point onward we find a lot of differents events per year. From 2003 onward there are around the official number of unique events per year, which is 48. It seems that from 1993 to 2002 there was some kind of coding problem in the collection process.
+
+Our objetive is to compare the harmful of different types of weather events that occur in the United States of America. In order to do this we will take into account both the destructive power of each episodic event and its frequency. Therefore, if we include the events that occurred before 1993, when only a few events were recorded, we will be skewing the results, as tornadoes, thunderstorm winds and hail events will be over-represented. Therefore we will only analyze data from 1993 onwards.
+
+Let's subset the dataset.
+
+```{r subsetingbydate}
+stormdata <- subset(stormdata, stormdata$BGN_DATE > "1992-12-31")
+```
+
+We have now 714738 events recorded, from 1993-01-01 to 2011-11-30.
+
+### Transforming variables
+
+Let's take a look into `$EVTYPE` variable.
+
+``` {r uniquecodes}
+length(unique(stormdata$EVTYPE))
+```
+
+There are 985 event types but, according to [NWS Directive 10-1605](https://www.ncdc.noaa.gov/stormevents/pd01016005curr.pdf), only 48 events are permitted in Storm Data (there is a newer directive, from March 23rd 2016, that adds 7 new events, but it doesn't apply to this dataset). The permitted events are the following:
+
+```{r officialevents}
+offevents <- c("Astronomical Low Tide", "Avalanche", "Blizzard", "Coastal Flood", "Cold/Wind Chill", "Debris Flow", "Dense Fog", "Dense Smoke", "Drought", "Dust Devil", "Dust Storm", "Excessive Heat", "Extreme Cold/Wind Chill", "Flash Flood", "Flood", "Frost/Freeze", "Funnel Cloud", "Freezing Fog", "Hail", "Heat", "Heavy Rain", "Heavy Snow", "High Surf", "High Wind", "Hurricane (Typhoon)", "Ice Storm", "Lake-Effect Snow", "Lakeshore Flood", "Lightning", "Marine Hail", "Marine High Wind", "Marine Strong Wind", "Marine Thunderstorm Wind", "Rip Current", "Seiche", "Sleet", "Storm Surge/Tide", "Strong Wind", "Thunderstorm Wind", "Tornado", "Tropical Depression", "Tropical Storm", "Tsunami", "Volcanic Ash", "Waterspout", "Wildfire", "Winter Storm", "Winter Weather")
+```
+
+Let's make some data cleaning on `$EVTYPE`.
+
+Firstly, we remove trailing, leading spaces and all extra spaces between words on the new variable.
+
+```{r removespaces}
+stormdata$EVTYPE <- gsub("\\s+", " ", str_trim(stormdata$EVTYPE))
+```
+
+Convert all characters to lower case.
+
+```{r lowercase}
+stormdata$EVTYPE <- tolower(stormdata$EVTYPE)
+```
+
+And make a data frame with all unique values and their frequencies, so we can work easily with the events.
+
+```{r eventsdf}
+events <- data.frame(stormdata[, .N, by = EVTYPE])
+```
+
+Now we have 883 events. Let's recode them.
+
+```{r recodeventss}
+events$recode <- NA
+events$recode[grepl("astronomical low tide", events$EVTYPE, perl = TRUE)] = offevents[1]
+events$recode[is.na(events$recode) & grepl("^aval", events$EVTYPE, perl = TRUE)] = offevents[2]
+events$recode[is.na(events$recode) & grepl("^bliz", events$EVTYPE, perl = TRUE)] = offevents[3]
+events$recode[is.na(events$recode) & grepl("^coast|^beach|cstl|astronomical high tide", events$EVTYPE, perl = TRUE)] = offevents[4]
+events$recode[is.na(events$recode) & grepl("^cold/wind chill|^cold wind chill|^cold$|^prolong cold", events$EVTYPE, perl = TRUE)] = offevents[5]
+events$recode[is.na(events$recode) & grepl("^landslide|^land slide|^mudslide|^mud slide", events$EVTYPE, perl = TRUE)] = offevents[6]
+events$recode[is.na(events$recode) & grepl("^dense fog|^fog", events$EVTYPE, perl = TRUE)] = offevents[7]
+events$recode[is.na(events$recode) & grepl("^dense smoke|smoke", events$EVTYPE, perl = TRUE)] = offevents[8]
+events$recode[is.na(events$recode) & grepl("^drou|^unseasonably dry", events$EVTYPE, perl = TRUE)] = offevents[9]
+events$recode[is.na(events$recode) & grepl("^dust devil", events$EVTYPE, perl = TRUE)] = offevents[10]
+events$recode[is.na(events$recode) & grepl("^dust storm", events$EVTYPE, perl = TRUE)] = offevents[11]
+events$recode[is.na(events$recode) & grepl("^excessive heat|extreme heat|record warmth|record heat", events$EVTYPE, perl = TRUE)] = offevents[12]
+events$recode[is.na(events$recode) & grepl("^extreme cold|^record cold|^extreme wind chill|^extreme windchill", events$EVTYPE, perl = TRUE)] = offevents[13]
+events$recode[is.na(events$recode) & grepl("^flash.*flood|^flood.*flash", events$EVTYPE, perl = TRUE)] = offevents[14]
+events$recode[is.na(events$recode) & grepl("^(?=flood)(?!.*flash)|urban/sml stream fld|river flood|urban flood", events$EVTYPE, perl = TRUE)] = offevents[15]
+events$recode[is.na(events$recode) & grepl("^frost/freeze|freeze|frost", events$EVTYPE, perl = TRUE)] = offevents[16]
+events$recode[is.na(events$recode) & grepl("funnel|cloud", events$EVTYPE, perl = TRUE)] = offevents[17]
+events$recode[is.na(events$recode) & grepl("^freezing fog", events$EVTYPE, perl = TRUE)] = offevents[18]
+events$recode[is.na(events$recode) & grepl("^hail|^small hail", events$EVTYPE, perl = TRUE)] = offevents[19]
+events$recode[is.na(events$recode) & grepl("^heat|^unseasonably warm", events$EVTYPE, perl = TRUE)] = offevents[20]
+events$recode[is.na(events$recode) & grepl("^heavy rain|excessive rain|record rain", events$EVTYPE, perl = TRUE)] = offevents[21]
+events$recode[is.na(events$recode) & grepl("heavy snow|^snow$", events$EVTYPE, perl = TRUE)] = offevents[22]
+events$recode[is.na(events$recode) & grepl("^heavy surf|^high surf", events$EVTYPE, perl = TRUE)] = offevents[23]
+events$recode[is.na(events$recode) & grepl("^high wind", events$EVTYPE, perl = TRUE)] = offevents[24]
+events$recode[is.na(events$recode) & grepl("^hurricane", events$EVTYPE, perl = TRUE)] = offevents[25]
+events$recode[is.na(events$recode) & grepl("^ice storm|^snow/ice|^ice/snow|^ice$", events$EVTYPE, perl = TRUE)] = offevents[26]
+events$recode[is.na(events$recode) & grepl("^lake effect snow|lake-effect", events$EVTYPE, perl = TRUE)] = offevents[27]
+events$recode[is.na(events$recode) & grepl("^lakeshore flood", events$EVTYPE, perl = TRUE)] = offevents[28]
+events$recode[is.na(events$recode) & grepl("^lightning", events$EVTYPE, perl = TRUE)] = offevents[29]
+events$recode[is.na(events$recode) & grepl("^marine hail", events$EVTYPE, perl = TRUE)] = offevents[30]
+events$recode[is.na(events$recode) & grepl("^marine high wind", events$EVTYPE, perl = TRUE)] = offevents[31]
+events$recode[is.na(events$recode) & grepl("^marine strong wind", events$EVTYPE, perl = TRUE)] = offevents[32]
+events$recode[is.na(events$recode) & grepl("marine thunderstorm|marine tstm", events$EVTYPE, perl = TRUE)] = offevents[33]
+events$recode[is.na(events$recode) & grepl("^rip current", events$EVTYPE, perl = TRUE)] = offevents[34]
+events$recode[is.na(events$recode) & grepl("^seiche", events$EVTYPE, perl = TRUE)] = offevents[35]
+events$recode[is.na(events$recode) & grepl("^sleet", events$EVTYPE, perl = TRUE)] = offevents[36]
+events$recode[is.na(events$recode) & grepl("^storm surge", events$EVTYPE, perl = TRUE)] = offevents[37]
+events$recode[is.na(events$recode) & grepl("^strong wind|^wind|^gusty winds", events$EVTYPE, perl = TRUE)] = offevents[38]
+events$recode[is.na(events$recode) & grepl("^thu|^tstm|^downburst|^dry microburst|gustnado", events$EVTYPE, perl = TRUE)] = offevents[39]
+events$recode[is.na(events$recode) & grepl("^torn", events$EVTYPE, perl = TRUE)] = offevents[40]
+events$recode[is.na(events$recode) & grepl("^tropical depression", events$EVTYPE, perl = TRUE)] = offevents[41]
+events$recode[is.na(events$recode) & grepl("^tropical storm", events$EVTYPE, perl = TRUE)] = offevents[42]
+events$recode[is.na(events$recode) & grepl("^tsunami", events$EVTYPE, perl = TRUE)] = offevents[43]
+events$recode[is.na(events$recode) & grepl("^volcanic", events$EVTYPE, perl = TRUE)] = offevents[44]
+events$recode[is.na(events$recode) & grepl("^waterspout", events$EVTYPE, perl = TRUE)] = offevents[45]
+events$recode[is.na(events$recode) & grepl("^wild", events$EVTYPE, perl = TRUE)] = offevents[46]
+events$recode[is.na(events$recode) & grepl("^winter storm|freezing rain|light snow|moderate snowfall|wintry mix", events$EVTYPE, perl = TRUE)] = offevents[47]
+events$recode[is.na(events$recode) & grepl("^winter weather", events$EVTYPE, perl = TRUE)] = offevents[48]
+```
+
+Let's check how many events are classified into some of the 48 official events.
+
+```{r checkrecode}
+tapply(events$N, !is.na(events$recode), sum)
+```
+
+We have 713352 events classified and 1386 NAs. This means than 99.8% of the total number of events were coded. It seems reasonable, so let's match the `events$recode` levels with the data set.
+
+```{r matchrecodedf}
+stormdata$EVTYPE_RECODE = events$recode[match(stormdata$EVTYPE, events$EVTYPE)]
+``` 
+
+Now let's work with `$PROPDMGEXP` and `$CROPDMGEXP`, the variables that multiply the numbers containing in `$PROPDMG` and `$CROPDMG`, respectively.
+
+The official documentation states that "alphabetical characters used to signify magnitud include 'K' for thousands, 'M' for millions, and 'B' for billions". Let's check it.
+
+```{r checkexpvar}
+sort(unique(stormdata$PROPDMGEXP))
+sort(unique(stormdata$CROPDMGEXP))
+```
+
+There are many other characters besides "K", "M" and "B" in the official documentation. We can find [here](https://rstudio-pubs-static.s3.amazonaws.com/58957_37b6723ee52b455990e149edde45e5b6.html) a complete analysis about the meaning of these characters. They appear to be reasonable, so we proceed with the encoding of each character following this analysis.
+
+```{r recodeexpvar}
+stormdata$PROPDMGEXP_COD[grepl("H|h", stormdata$PROPDMGEXP, perl = TRUE)] = 10^2
+stormdata$PROPDMGEXP_COD[grepl("K|k", stormdata$PROPDMGEXP, perl = TRUE)] = 10^3
+stormdata$PROPDMGEXP_COD[grepl("M|m", stormdata$PROPDMGEXP, perl = TRUE)] = 10^6
+stormdata$PROPDMGEXP_COD[grepl("B|b", stormdata$PROPDMGEXP, perl = TRUE)] = 10^9
+stormdata$PROPDMGEXP_COD[grepl("\\+", stormdata$PROPDMGEXP, perl = TRUE)] = 1
+stormdata$PROPDMGEXP_COD[grepl("\\-|\\?|^\\s*$|^$", stormdata$PROPDMGEXP, perl = TRUE)] = 0
+stormdata$PROPDMGEXP_COD[grepl("[0-8]", stormdata$PROPDMGEXP, perl = TRUE)] = 10
+stormdata$CROPDMGEXP_COD[grepl("H|h", stormdata$CROPDMGEXP, perl = TRUE)] = 10^2
+stormdata$CROPDMGEXP_COD[grepl("K|k", stormdata$CROPDMGEXP, perl = TRUE)] = 10^3
+stormdata$CROPDMGEXP_COD[grepl("M|m", stormdata$CROPDMGEXP, perl = TRUE)] = 10^6
+stormdata$CROPDMGEXP_COD[grepl("B|b", stormdata$CROPDMGEXP, perl = TRUE)] = 10^9
+stormdata$CROPDMGEXP_COD[grepl("\\+", stormdata$CROPDMGEXP, perl = TRUE)] = 1
+stormdata$CROPDMGEXP_COD[grepl("\\-|\\?|^\\s*$|^$", stormdata$CROPDMGEXP, perl = TRUE)] = 0
+stormdata$CROPDMGEXP_COD[grepl("[0-8]", stormdata$CROPDMGEXP, perl = TRUE)] = 10
+```
+
+Now we can calculate the property and crop damages as dollar amounts by multiplying `$PROPDMG` and `$CROPDMG` by `$PROPDMGEXP_COD` and `$CROPDMGEXP_COD`, respectively.
+
+```{r propandcropdmgcal}
+stormdata$PROPDMG_T <- stormdata$PROPDMG * stormdata$PROPDMGEXP_COD
+stormdata$CROPDMG_T <- stormdata$CROPDMG * stormdata$CROPDMGEXP_COD
+```
+
+We achieved now the economic damage to properties and crops, by type of event, as dollar amounts.
+
+We create a data frame with the sums of `$FATALITIES`, `$INJURIES` `$PROPDMG_T` and `$CROPDMG_T` for each event, and convert to long format in order to create the plots easily.
+
+The `resumedf` data frame has 49 events instead of 48 because it includes the NA event, that is , those events that have not been recoded in one of the official events.
+
+```{r finaldfs}
+### Resume by event
+resumedf <- stormdata[,.(Fatalities = sum(FATALITIES), Injuries = sum(INJURIES), Prop_damages = sum(PROPDMG_T), Crop_damages = sum(CROPDMG_T)), by = EVTYPE_RECODE]
+resumedf$humandmg <- resumedf$Fatalities + resumedf$Injuries
+resumedf$econdmg <- resumedf$Prop_damages + resumedf$Crop_damages
+colnames(resumedf) <- c("Events", "Fatalities", "Injuries", "Properties", "Crops", "Health_damages", "Economics_damages")
+### Health damages on long format
+top10healthdmg <- melt(data = head(resumedf[order(resumedf$Health_damages, decreasing = TRUE),], 10), id.vars = "Events", measure.vars = c("Fatalities", "Injuries"), variable.name = "Damage", value.name = "People")
+### Economic damages on long format
+top10economicdmg <- melt(data = head(resumedf[order(resumedf$Economics_damages, decreasing = TRUE),], 10), id.vars = "Events", measure.vars = c("Properties", "Crops"), variable.name = "Damage", value.name = "Dollars")
+```
+
+## Results
+
+**Across the United States, which types of events are most harmful with respect to population health?**
+
+```{r healthdmgplot, fig.width = 10}
+ggplot(data = top10healthdmg, aes(x = Events, y = People, fill = Damage)) + geom_bar(stat = "identity") + coord_flip() + ggtitle("People dead or injured by storm events in the USA\nbetween 1993 and 2011") + labs(x="Storm events",y="Human casualties") + scale_x_discrete(limits = tail(resumedf$Events[order(resumedf$Health_damages)], 10), labels = tail(resumedf$Events[order(resumedf$Health_damages)], 10)) + guides(fill=guide_legend(title=NULL)) + theme(panel.grid.minor.y=element_blank(), panel.grid.major.y=element_blank())
+```
+
+The most harmful storm event to the people health is "Tornado", especially in regard to injuries. From 1993 to 2011 almost 25000 people were dead or injured due to tornadoes. The next in the ranking of dangerousness is "Excessive Heat"", but the total amount of people damaged is much lower, around 7500 people. Relative to fatalities, "Excessive Heat" is more dangerous than "Tornado". In fact, more than 3000 people have died from heat, between 1993 and 2011.
+
+**Across the United States, which types of events have the greatest economic consequences?**
+
+```{r economicdmgplot, fig.width = 10}
+ggplot(data = top10economicdmg, aes(x = Events, y = Dollars, fill = Damage)) + geom_bar(stat = "identity") + coord_flip() + ggtitle("Cost of damages in properties and crops in the USA\nbetween 1993 and 2011") + labs(x="Storm events",y="Economic losses ( in billions of dollars )") + scale_x_discrete(limits = tail(resumedf$Events[order(resumedf$Economics_damages)], 10), labels = tail(resumedf$Events[order(resumedf$Economics_damages)], 10)) + guides(fill=guide_legend(title=NULL)) + scale_y_continuous(labels=function(x)x/1000000000) + theme(panel.grid.minor.y=element_blank(), panel.grid.major.y=element_blank())
+```
+
+The most economically costly weather event is flooding , with damage worth nearly 161 billion dollars between 1993 and 2011. The vast majority of this amount , about 150 billion, is due to property damage .
+
+The biggest economic losses in crop damage are due to drought , which is in seventh place in the ranking, with about 15 billion dollars in losses.
